@@ -1,31 +1,26 @@
 #include <FiniteStateMachine.h>
 #include <TM1637Display.h>
-#include <TimeLib.h>
+#include <Wire.h>
+#include "RTClib.h"
 
 const byte CLK_PIN = 2;
 const byte DIO_PIN = 3;
 
-const byte ARMED_NUM = 0;
 const byte ARMED_PIN = 8;
-
-const byte TIME_NUM = 1;
-const byte TIME_PIN = 9;
-
-const byte TRAP_NUM = 2;
+const byte MOVE_PIN = 9;
 const byte TRAP_PIN = 10;
-
-const byte CONTACT_NUM = 3;  
 const byte CONTACT_PIN = 11;
 
 const byte BUZZER_PIN = 5;
 
 const word IDLE_WAIT = 5000;
-const unsigned long COUTING_WAIT = 210000;
+const unsigned long COUTING_WAIT = 150;
 
 const byte IDLE_SYMBOL = SEG_A | SEG_D;
 const byte ARMED_SYMBOL = SEG_G;
 
 TM1637Display display(CLK_PIN, DIO_PIN);
+RTC_DS3231 rtc;
 
 void idleEnter(){
   digitalWrite(LED_BUILTIN, LOW); 
@@ -40,21 +35,32 @@ State boom = State(boomEnter,boomUpdate,nothing);
 
 FSM detonator = FSM(idle);
 
-boolean senzors[4] = {false, false, false, false};
+DateTime now;
+DateTime alarm;
 
-unsigned long timeInCurrentState = 0;
+boolean senzors[5] = {false, false, false, false, false};
 
 void setup() {
   pinMode(ARMED_PIN, INPUT_PULLUP);
   pinMode(TRAP_PIN, INPUT_PULLUP);
   pinMode(CONTACT_PIN, INPUT_PULLUP);
-  pinMode(TIME_PIN, INPUT_PULLUP);
-
+  pinMode(MOVE_PIN, INPUT_PULLUP);
+  
   pinMode(LED_BUILTIN, OUTPUT);
+
+  rtc.begin();
+  rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+
+  alarm = DateTime(2016,3,19,19,30,0); //19.3.2016 19:30
+  
+  //If remainig time is bigger then 24 hour or if it is pass the limit, set the counter to 150 seconds
+  DateTime n = rtc.now();
+  TimeSpan t = alarm - n;
+  if ((t.days())||(n.secondstime() > alarm.secondstime())) alarm = n + TimeSpan(COUTING_WAIT);
 }
 
 void loop() {
-  //timeInCurrentState = detonator.timeInCurrentState();
+  now = rtc.now();    
   
   if (!detonator.isInState(boom)) readSenzors();
   
@@ -66,7 +72,7 @@ void loop() {
   }
   
   if (detonator.isInState(counting)){
-    if ((!checkSenzors())||(detonator.timeInCurrentState() >= COUTING_WAIT)) detonator.transitionTo(boom);
+    if ((!checkSenzors())||(now.secondstime() >= alarm.secondstime())) detonator.transitionTo(boom);
   }
   
   detonator.update();
@@ -81,16 +87,45 @@ boolean checkSenzors(){
 }
 
 void readSenzors(){
-  senzors[TRAP_NUM] = !digitalRead(TRAP_PIN);
-  senzors[CONTACT_NUM] = digitalRead(CONTACT_PIN);
-  senzors[ARMED_NUM] = !digitalRead(ARMED_PIN);
-  senzors[TIME_NUM] = !digitalRead(TIME_PIN);
+  senzors[0] = !digitalRead(ARMED_PIN);
+  senzors[1] = digitalRead(MOVE_PIN);
+  senzors[2] = !digitalRead(TRAP_PIN);
+  senzors[3] = !digitalRead(CONTACT_PIN);
+  
+  Wire.beginTransmission(DS3231_ADDRESS);
+  senzors[4] = !Wire.endTransmission();
 }
 
-void countingEnter(){  
+void showTime(){
+  display.showNumberDec(now.day()*100+now.month(),true);
+  delay(1000);
+  display.showNumberDec(now.year());
+  delay(1000);
+  display.setColon(true);
+  display.showNumberDec(now.hour()*100+now.minute(),true);
+  delay(1000);
+  display.setColon(false);
+  
+  display.showNumberDec(alarm.day()*100+alarm.month(),true);
+  delay(1000);
+  display.showNumberDec(alarm.year());
+  delay(1000);
+  display.setColon(true);
+  display.showNumberDec(alarm.hour()*100+alarm.minute(),true);  
+  delay(1000);
+  display.setColon(false);
+}
+
+void beep(){
   tone(BUZZER_PIN, 2093, 250);
   delay(300);
   noTone(BUZZER_PIN);
+}
+
+void countingEnter(){  
+  beep();
+  showTime();
+  beep();
   pinMode(BUZZER_PIN,INPUT);
 }
 
@@ -99,11 +134,10 @@ void armedUpdate(){
     
     unsigned long progress = detonator.timeInCurrentState();
     for (byte i = 0; i<= 3; i++)
-      if ((progress / 1000) >= (i+1)) data[i] = SEG_G;
+      if ((progress / 1000) >= (i+1)) data[i] = ARMED_SYMBOL;
     
     display.setSegments(data);
 }
-
 
 void idleUpdate(){
     uint8_t data[] = {0,0,0,0};
@@ -120,9 +154,9 @@ void countingUpdate(){
   digitalWrite(LED_BUILTIN, isBlink);  
   display.setColon(isBlink);
   
-  time_t t = (COUTING_WAIT - detonator.timeInCurrentState()) / 1000;
+  TimeSpan t = alarm - now;
 
-  word digits =  hour(t) ? hour(t)*100+minute(t) : minute(t)*100+second(t);
+  word digits =  t.hours() ? t.hours()*100+t.minutes() : t.minutes()*100+t.seconds();
   display.showNumberDec(digits,true);
 }
 
