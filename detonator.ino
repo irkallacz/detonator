@@ -1,7 +1,7 @@
 #include <FiniteStateMachine.h>
 #include <TM1637Display.h>
 #include <Wire.h>
-#include "RTClib.h"
+#include <RTClib.h>
 
 const byte CLK_PIN = 2;
 const byte DIO_PIN = 3;
@@ -19,6 +19,8 @@ const unsigned long COUTING_WAIT = 150;
 const byte IDLE_SYMBOL = SEG_A | SEG_D;
 const byte ARMED_SYMBOL = SEG_G;
 
+const DateTime date = DateTime(2016,3,19,19,30,0); //19.03.2016 19:30
+
 TM1637Display display(CLK_PIN, DIO_PIN);
 RTC_DS3231 rtc;
 
@@ -30,7 +32,6 @@ void idleEnter(){
 State idle = State(idleEnter,idleUpdate,nothing);
 State armed = State(armedUpdate);
 State counting = State(countingEnter,countingUpdate,nothing);
-
 State boom = State(boomEnter,boomUpdate,nothing);
 
 FSM detonator = FSM(idle);
@@ -50,28 +51,30 @@ void setup() {
 
   rtc.begin();
   rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-
-  alarm = DateTime(2016,3,19,19,30,0); //19.3.2016 19:30
   
-  //If remainig time is bigger then 24 hour or if it is pass the limit, set the counter to 150 seconds
+  //if remainig time is bigger then 24 hours, or if it is pass the date, set the counter to 150 seconds
   DateTime n = rtc.now();
-  TimeSpan t = alarm - n;
-  if ((t.days())||(n.secondstime() > alarm.secondstime())) alarm = n + TimeSpan(COUTING_WAIT);
+  TimeSpan t = n - date;
+  alarm = ((t.days())||(n.secondstime() > date.secondstime())) ? n + TimeSpan(COUTING_WAIT) : date;
 }
 
 void loop() {
-  now = rtc.now();    
-  
+  //read data from senzors, unless already in explosion
   if (!detonator.isInState(boom)) readSenzors();
   
+  //if in idle and nothig in senzors go to armed state
   if ((detonator.isInState(idle))&&(checkSenzors())) detonator.transitionTo(armed);
   
+  //if in armed state for 5 seconds go to couting state
+  //if in armed state and got something in senzors go back to idle
   if (detonator.isInState(armed)){
-    if (!checkSenzors()) detonator.transitionTo(idle);
     if (detonator.timeInCurrentState() >= IDLE_WAIT) detonator.transitionTo(counting);
+    if (!checkSenzors()) detonator.transitionTo(idle);
   }
   
+  //if in couting state and time is up, or something in senzors, go to explosion
   if (detonator.isInState(counting)){
+    now = rtc.now();    
     if ((!checkSenzors())||(now.secondstime() >= alarm.secondstime())) detonator.transitionTo(boom);
   }
   
@@ -96,22 +99,13 @@ void readSenzors(){
   senzors[4] = !Wire.endTransmission();
 }
 
-void showTime(){
-  display.showNumberDec(now.day()*100+now.month(),true);
+void showTime(const DateTime t){
+  display.showNumberDec(t.day()*100+t.month(),true);
   delay(1000);
-  display.showNumberDec(now.year());
-  delay(1000);
-  display.setColon(true);
-  display.showNumberDec(now.hour()*100+now.minute(),true);
-  delay(1000);
-  display.setColon(false);
-  
-  display.showNumberDec(alarm.day()*100+alarm.month(),true);
-  delay(1000);
-  display.showNumberDec(alarm.year());
+  display.showNumberDec(t.year());
   delay(1000);
   display.setColon(true);
-  display.showNumberDec(alarm.hour()*100+alarm.minute(),true);  
+  display.showNumberDec(t.hour()*100+t.minute(),true);
   delay(1000);
   display.setColon(false);
 }
@@ -124,7 +118,8 @@ void beep(){
 
 void countingEnter(){  
   beep();
-  showTime();
+  showTime(now);
+  showTime(date);
   beep();
   pinMode(BUZZER_PIN,INPUT);
 }
