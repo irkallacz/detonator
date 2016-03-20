@@ -2,27 +2,36 @@
 #include <TM1637Display.h>
 #include <Wire.h>
 #include <RTClib.h>
+#include <Bounce2.h>
 
-const byte CLK_PIN = 2;
-const byte DIO_PIN = 3;
+const byte CLK_PIN = 7;
+const byte DIO_PIN = 6;
 
-const byte ARMED_PIN = 8;
+const byte ARMED_PIN = 3;
 const byte MOVE_PIN = 9;
-const byte TRAP_PIN = 10;
-const byte CONTACT_PIN = 11;
+const byte TRAP_PIN = 4;
+const byte CONTACT_PIN = 5;
 
-const byte BUZZER_PIN = 5;
+const byte BUZZER_PIN = 8;
 
-const word IDLE_WAIT = 5000;
-const unsigned long COUTING_WAIT = 150;
+const word IDLE_WAIT = 5000; //ms
+const word CONTACT_WAIT = 1000; //ms
+const word ARMED_WAIT = 3000; //ms
+
+const word TIME_WAIT = 1000; //ms
+
+const unsigned long COUTING_WAIT = 150; //sec
 
 const byte IDLE_SYMBOL = SEG_A | SEG_D;
 const byte ARMED_SYMBOL = SEG_G;
 
-const DateTime date = DateTime(2016,3,19,19,30,0); //19.03.2016 19:30
+const DateTime date = DateTime(2016,3,19,20,00,0); //19.03.2016 20:00
 
 TM1637Display display(CLK_PIN, DIO_PIN);
 RTC_DS3231 rtc;
+
+Bounce contact = Bounce(); 
+Bounce button = Bounce(); 
 
 void idleEnter(){
   digitalWrite(LED_BUILTIN, LOW); 
@@ -49,8 +58,14 @@ void setup() {
   
   pinMode(LED_BUILTIN, OUTPUT);
 
+  contact.attach(CONTACT_PIN);
+  contact.interval(CONTACT_WAIT);
+
+  button.attach(ARMED_PIN);
+  button.interval(ARMED_WAIT);
+  
   rtc.begin();
-  rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  //rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   
   //if remainig time is bigger then 24 hours, or if it is pass the date, set the counter to 150 seconds
   DateTime n = rtc.now();
@@ -90,10 +105,15 @@ boolean checkSenzors(){
 }
 
 void readSenzors(){
-  senzors[0] = !digitalRead(ARMED_PIN);
+  button.update();
+  //senzors[0] = !digitalRead(ARMED_PIN);
+  senzors[0] = !button.read();
   senzors[1] = digitalRead(MOVE_PIN);
   senzors[2] = !digitalRead(TRAP_PIN);
-  senzors[3] = !digitalRead(CONTACT_PIN);
+  //senzors[3] = !digitalRead(CONTACT_PIN);
+  
+  contact.update();
+  senzors[3] = contact.read();
   
   Wire.beginTransmission(DS3231_ADDRESS);
   senzors[4] = !Wire.endTransmission();
@@ -101,12 +121,12 @@ void readSenzors(){
 
 void showTime(const DateTime t){
   display.showNumberDec(t.day()*100+t.month(),true);
-  delay(1000);
+  delay(TIME_WAIT);
   display.showNumberDec(t.year());
-  delay(1000);
+  delay(TIME_WAIT);
   display.setColon(true);
   display.showNumberDec(t.hour()*100+t.minute(),true);
-  delay(1000);
+  delay(TIME_WAIT);
   display.setColon(false);
 }
 
@@ -131,15 +151,19 @@ void armedUpdate(){
     for (byte i = 0; i<= 3; i++)
       if ((progress / 1000) >= (i+1)) data[i] = ARMED_SYMBOL;
     
+    display.setColon(false);
     display.setSegments(data);
 }
 
 void idleUpdate(){
     uint8_t data[] = {0,0,0,0};
     
-    for(byte i = 0;i<sizeof(senzors);i++) 
+    display.setColon(false);
+    
+    for(byte i = 0;i < 4; i++) 
       if (!senzors[i]) data[i] = IDLE_SYMBOL;
     
+    display.setColon(senzor[4]);  
     display.setSegments(data);
 }
 
